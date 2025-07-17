@@ -2,7 +2,7 @@ import torch
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import *
 
 
-class nnUNetClsTrainer(nnUNetTrainer):
+class nnUNetClsTrainerDEBUG(nnUNetTrainer):
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
                  device: torch.device = torch.device('cuda')):
         # From https://grugbrain.dev/. Worth a read ya big brains ;-)
@@ -83,7 +83,7 @@ class nnUNetClsTrainer(nnUNetTrainer):
         self.probabilistic_oversampling = False
         self.num_iterations_per_epoch = 250
         self.num_val_iterations_per_epoch = 50
-        self.num_epochs = 500
+        self.num_epochs = 1000
         self.current_epoch = 0
         self.enable_deep_supervision = True
 
