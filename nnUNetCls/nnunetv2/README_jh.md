@@ -10,10 +10,10 @@ https://github.com/MIC-DKFZ/nnUNet/blob/master/documentation/installation_instru
 
 ```
 conda create -n nnunetv2_cls python==3.11.5
-cd /mnt/workspace/aneurysm/nnUNetCLS
+cd .../nnunet/nnUNetCLS
 pip install -e .
-
-
+cd  .../nnunet/dynamic-network-architectures
+pip install -e .
 ```
 
 
@@ -36,8 +36,7 @@ export nnUNet_results="/media/NAS07/USER_PATH/jh/nnunet/test_junma/nnUNetCls_out
 3.1 Generate Data for nnUNet_raw
 
 Run:
-`.../dataset_conversion/Dataset085_artery_cta_aneu_base.py`
-`.../dataset_conversion/Dataset086_artery_nct_aneu_base.py`
+`.../nnunet/nnUNetCLS/dataset_conversion/Dataset100_JM.py`
 
 3.2 Preprocessing
 
@@ -51,47 +50,29 @@ nnUNetv2_plan_and_preprocess -d 100 --verify_dataset_integrity
 
 ```sh
 nnUNetv2_plan_experiment -d DATASET -pl nnUNetPlannerResEnc(M/L/XL)
-
-nnUNetv2_plan_experiment -d 100 -pl nnUNetPlannerResEncM
 ```
 
 4. Train
 
-Run:
+See:
 
 ```sh
-cd aneurysm/nnUNet/nnunetv2
+.../nnunet/nnUNetCLS/run_train_debug.sh
 ```
-
-```sh
-
-nohup nnUNetv2_train 085 3d_fullres 0 --npz -tr nnUNetTrainer -p nnUNetResEncUNetXLPlans >> log_train_085_3d_fullres_0.txt & 
-
-nohup nnUNetv2_train 086 3d_fullres 0 --npz -tr nnUNetTrainer -p nnUNetResEncUNetXLPlans >> log_train_086_3d_fullres_0.txt & 
-```
-
-
 
 
 5. Val
 
-
-Run:
-
+See:
 ```sh
-cd aneurysm/nnUNet/nnunetv2
+.../nnunet/nnUNetCLS/run_test_debug.sh
 ```
 
+6. Cal metrics
+
+See:
+
 ```sh
-nohup nnUNetv2_train 085 3d_fullres 0 --npz -tr nnUNetTrainer -p nnUNetResEncUNetXLPlans --val --val_best >> log_test_085_3d_fullres_0.txt & 
-
-nohup nnUNetv2_train 086 3d_fullres 0 --npz -tr nnUNetTrainer -p nnUNetResEncUNetXLPlans --val --val_best >> log_test_086_3d_fullres_0.txt & 
-```
-
-
-
-6. Evaluation
-
-```bash
-/mnt/workspace/aneurysm/nnUNet/evaluation/batch_metric_new_npz_allfold.py
+.../nnunet/nnUNetCLS/cal_metrics_cls.py
+.../nnunet/nnUNetCLS/cal_metrics_seg.py
 ```
