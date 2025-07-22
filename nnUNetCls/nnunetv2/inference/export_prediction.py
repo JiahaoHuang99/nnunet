@@ -1,5 +1,6 @@
 from typing import Union, List
-
+import os
+import csv
 import numpy as np
 import torch
 from acvl_utils.cropping_and_padding.bounding_boxes import insert_crop_into_image
@@ -70,7 +71,6 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
         torch.set_num_threads(old_threads)
         return segmentation_reverted_cropping
 
-
 def export_prediction_from_logits(predicted_array_or_file: Union[np.ndarray, torch.Tensor], properties_dict: dict,
                                   configuration_manager: ConfigurationManager,
                                   plans_manager: PlansManager,
@@ -108,6 +108,67 @@ def export_prediction_from_logits(predicted_array_or_file: Union[np.ndarray, tor
     rw = plans_manager.image_reader_writer_class()
     rw.write_seg(segmentation_final, output_file_truncated + dataset_json_dict_or_file['file_ending'],
                  properties_dict)
+
+def export_prediction_from_logits_cls(
+        predicted_array_or_file: Union[np.ndarray, torch.Tensor],
+        predicted_array_cls: Union[np.ndarray, torch.Tensor],
+        properties_dict: dict,
+        configuration_manager: ConfigurationManager,
+        plans_manager: PlansManager,
+        dataset_json_dict_or_file: Union[dict, str],
+        output_path: str,
+        output_file_truncated: str,
+        save_probabilities: bool = False,
+        num_threads_torch: int = default_num_processes
+                                      ):
+    # if isinstance(predicted_array_or_file, str):
+    #     tmp = deepcopy(predicted_array_or_file)
+    #     if predicted_array_or_file.endswith('.npy'):
+    #         predicted_array_or_file = np.load(predicted_array_or_file)
+    #     elif predicted_array_or_file.endswith('.npz'):
+    #         predicted_array_or_file = np.load(predicted_array_or_file)['softmax']
+    #     os.remove(tmp)
+
+    if isinstance(dataset_json_dict_or_file, str):
+        dataset_json_dict_or_file = load_json(dataset_json_dict_or_file)
+
+    label_manager = plans_manager.get_label_manager(dataset_json_dict_or_file)
+    ret = convert_predicted_logits_to_segmentation_with_correct_shape(
+        predicted_array_or_file, plans_manager, configuration_manager, label_manager, properties_dict,
+        return_probabilities=save_probabilities, num_threads_torch=num_threads_torch
+    )
+    del predicted_array_or_file
+
+    # 先 softmax 得到概率
+    classification_prob = torch.softmax(predicted_array_cls, dim=-1)
+    classification_confidence_final, classification_final = torch.max(classification_prob, dim=-1)  # confidence: tensor([0.7704]), pred: tensor([2])
+
+    classification_confidence_final = classification_confidence_final.cpu().numpy().item()
+    classification_final = classification_final.cpu().numpy().item()
+
+    case_name = os.path.basename(output_file_truncated)
+
+    # save
+    if save_probabilities:
+        segmentation_final, probabilities_final = ret
+        np.savez_compressed(output_file_truncated + '.npz', probabilities=probabilities_final)
+        save_pickle(properties_dict, output_file_truncated + '.pkl')
+        del probabilities_final, ret
+    else:
+        segmentation_final = ret
+        del ret
+
+    rw = plans_manager.image_reader_writer_class()
+    rw.write_seg(segmentation_final, output_file_truncated + dataset_json_dict_or_file['file_ending'],
+                 properties_dict)
+
+    result_dict_cls = {
+        'case_name': case_name,
+        'pred': classification_final,
+        'confidence': classification_confidence_final
+    }
+
+    return result_dict_cls
 
 
 def resample_and_save(predicted: Union[torch.Tensor, np.ndarray], target_shape: List[int], output_file: str,

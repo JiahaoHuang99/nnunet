@@ -105,7 +105,8 @@ def resample_torch_fornnunet(
         force_separate_z: Union[bool, None] = None,
         separate_z_anisotropy_threshold: float = ANISO_THRESHOLD,
         mode='linear',
-        aniso_axis_mode='nearest-exact'
+        aniso_axis_mode='nearest-exact',
+        **kwargs
 ):
     """
     data must be c, x, y, z
@@ -123,8 +124,8 @@ def resample_torch_fornnunet(
         if was_numpy:
             data = torch.from_numpy(data)
 
-        assert len(axis) == 1
-        axis = axis[0]
+        # assert len(axis) == 1
+        # axis = axis[0]
         tmp = "xyz"
         axis_letter = tmp[axis]
         others_int = [i for i in range(3) if i != axis]

@@ -20,7 +20,11 @@ class nnUNetLogger(object):
             'ema_fg_dice': list(),
             'dice_per_class_or_region': list(),
             'train_losses': list(),
+            'train_loss_seg': list(),
+            'train_loss_cls': list(),
             'val_losses': list(),
+            'val_loss_seg': list(),
+            'val_loss_cls': list(),
             'lrs': list(),
             'epoch_start_timestamps': list(),
             'epoch_end_timestamps': list()
@@ -60,11 +64,15 @@ class nnUNetLogger(object):
         ax = ax_all[0]
         ax2 = ax.twinx()
         x_values = list(range(epoch + 1))
-        ax.plot(x_values, self.my_fantastic_logging['train_losses'][:epoch + 1], color='b', ls='-', label="loss_tr", linewidth=4)
-        ax.plot(x_values, self.my_fantastic_logging['val_losses'][:epoch + 1], color='r', ls='-', label="loss_val", linewidth=4)
-        ax2.plot(x_values, self.my_fantastic_logging['mean_fg_dice'][:epoch + 1], color='g', ls='dotted', label="pseudo dice",
+        ax.plot(x_values, self.my_fantastic_logging['train_losses'][:epoch + 1], color='steelblue', ls='-', label="loss_tr", linewidth=4)
+        ax.plot(x_values, self.my_fantastic_logging['train_loss_seg'][:epoch + 1], color='deepskyblue', ls='-', label="loss_seg_tr", linewidth=4)
+        ax.plot(x_values, self.my_fantastic_logging['train_loss_cls'][:epoch + 1], color='lightblue', ls='-', label="loss_cls_tr", linewidth=4)
+        ax.plot(x_values, self.my_fantastic_logging['val_losses'][:epoch + 1], color='tomato', ls='-', label="loss_val", linewidth=4)
+        ax.plot(x_values, self.my_fantastic_logging['val_loss_seg'][:epoch + 1], color='indianred', ls='-', label="loss_seg_val", linewidth=4)
+        ax.plot(x_values, self.my_fantastic_logging['val_loss_cls'][:epoch + 1], color='darkred', ls='-', label="loss_cls_val", linewidth=4)
+        ax2.plot(x_values, self.my_fantastic_logging['mean_fg_dice'][:epoch + 1], color='limegreen', ls='dotted', label="pseudo dice",
                  linewidth=3)
-        ax2.plot(x_values, self.my_fantastic_logging['ema_fg_dice'][:epoch + 1], color='g', ls='-', label="pseudo dice (mov. avg.)",
+        ax2.plot(x_values, self.my_fantastic_logging['ema_fg_dice'][:epoch + 1], color='forestgreen', ls='-', label="pseudo dice (mov. avg.)",
                  linewidth=4)
         ax.set_xlabel("epoch")
         ax.set_ylabel("loss")

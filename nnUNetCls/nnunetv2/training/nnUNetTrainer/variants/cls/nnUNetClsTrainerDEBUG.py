@@ -1,5 +1,6 @@
 import torch
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import *
+from nnunetv2.inference.predict_from_raw_data_cls import *
 
 
 class nnUNetClsTrainerDEBUG(nnUNetTrainer):
@@ -83,7 +84,7 @@ class nnUNetClsTrainerDEBUG(nnUNetTrainer):
         self.probabilistic_oversampling = False
         self.num_iterations_per_epoch = 250
         self.num_val_iterations_per_epoch = 50
-        self.num_epochs = 1000
+        self.num_epochs = 500
         self.current_epoch = 0
         self.enable_deep_supervision = True
 
@@ -969,19 +970,36 @@ class nnUNetClsTrainerDEBUG(nnUNetTrainer):
             l.backward()
             torch.nn.utils.clip_grad_norm_(self.network.parameters(), 12)
             self.optimizer.step()
-        return {'loss': l.detach().cpu().numpy()}
+        return {
+            'loss': l.detach().cpu().numpy(),
+            'loss_seg': l_seg.detach().cpu().numpy(),
+            'loss_cls': l_cls.detach().cpu().numpy(),
+        }
 
     def on_train_epoch_end(self, train_outputs: List[dict]):
         outputs = collate_outputs(train_outputs)
 
         if self.is_ddp:
             losses_tr = [None for _ in range(dist.get_world_size())]
+            losses_seg_tr = [None for _ in range(dist.get_world_size())]
+            losses_cls_tr = [None for _ in range(dist.get_world_size())]
+
             dist.all_gather_object(losses_tr, outputs['loss'])
+            dist.all_gather_object(losses_seg_tr, outputs['loss_seg'])
+            dist.all_gather_object(losses_cls_tr, outputs['loss_cls'])
+
             loss_here = np.vstack(losses_tr).mean()
+            loss_seg_here = np.vstack(losses_seg_tr).mean()
+            loss_cls_here= np.vstack(losses_cls_tr).mean()
+
         else:
             loss_here = np.mean(outputs['loss'])
+            loss_seg_here = np.mean(outputs['loss_seg'])
+            loss_cls_here = np.mean(outputs['loss_cls'])
 
         self.logger.log('train_losses', loss_here, self.current_epoch)
+        self.logger.log('train_loss_seg', loss_seg_here, self.current_epoch)
+        self.logger.log('train_loss_cls', loss_cls_here, self.current_epoch)
 
     def on_validation_epoch_start(self):
         self.network.eval()
@@ -1061,7 +1079,14 @@ class nnUNetClsTrainerDEBUG(nnUNetTrainer):
             fp_hard = fp_hard[1:]
             fn_hard = fn_hard[1:]
 
-        return {'loss': l.detach().cpu().numpy(), 'tp_hard': tp_hard, 'fp_hard': fp_hard, 'fn_hard': fn_hard}
+        return {
+            'loss': l.detach().cpu().numpy(),
+            'loss_seg': l_seg.detach().cpu().numpy(),
+            'loss_cls': l_cls.detach().cpu().numpy(),
+            'tp_hard': tp_hard,
+            'fp_hard': fp_hard,
+            'fn_hard': fn_hard
+        }
 
     def on_validation_epoch_end(self, val_outputs: List[dict]):
         outputs_collated = collate_outputs(val_outputs)
@@ -1085,16 +1110,29 @@ class nnUNetClsTrainerDEBUG(nnUNetTrainer):
             fn = np.vstack([i[None] for i in fns]).sum(0)
 
             losses_val = [None for _ in range(world_size)]
+            losses_seg_val = [None for _ in range(world_size)]
+            losses_cls_val = [None for _ in range(world_size)]
+
             dist.all_gather_object(losses_val, outputs_collated['loss'])
+            dist.all_gather_object(losses_seg_val, outputs_collated['loss_seg'])
+            dist.all_gather_object(losses_cls_val, outputs_collated['loss_cls'])
+
             loss_here = np.vstack(losses_val).mean()
+            loss_seg_here = np.vstack(losses_seg_val).mean()
+            loss_cls_here = np.vstack(losses_cls_val).mean()
+
         else:
             loss_here = np.mean(outputs_collated['loss'])
+            loss_seg_here = np.mean(outputs_collated['loss_seg'])
+            loss_cls_here = np.mean(outputs_collated['loss_cls'])
 
         global_dc_per_class = [i for i in [2 * i / (2 * i + j + k) for i, j, k in zip(tp, fp, fn)]]
         mean_fg_dice = np.nanmean(global_dc_per_class)
         self.logger.log('mean_fg_dice', mean_fg_dice, self.current_epoch)
         self.logger.log('dice_per_class_or_region', global_dc_per_class, self.current_epoch)
         self.logger.log('val_losses', loss_here, self.current_epoch)
+        self.logger.log('val_loss_seg', loss_seg_here, self.current_epoch)
+        self.logger.log('val_loss_cls', loss_cls_here, self.current_epoch)
 
     def on_epoch_start(self):
         self.logger.log('epoch_start_timestamps', time(), self.current_epoch)
@@ -1227,11 +1265,6 @@ class nnUNetClsTrainerDEBUG(nnUNetTrainer):
             dataset_val = self.dataset_class(self.preprocessed_dataset_folder, val_keys,
                                              folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage)
 
-            next_stages = self.configuration_manager.next_stage_names
-
-            if next_stages is not None:
-                _ = [maybe_mkdir_p(join(self.output_folder_base, 'predicted_next_stage', n)) for n in next_stages]
-
             results = []
 
             for i, k in enumerate(dataset_val.identifiers):
@@ -1260,62 +1293,38 @@ class nnUNetClsTrainerDEBUG(nnUNetTrainer):
                 self.print_to_log_file(f'{k}, shape {data.shape}, rank {self.local_rank}')
                 output_filename_truncated = join(validation_output_folder, k)
 
-                prediction = predictor.predict_sliding_window_return_logits(data)
+                prediction, prediction_cls = predictor.predict_sliding_window_return_logits(data)
+
                 prediction = prediction.cpu()
+                prediction_cls = prediction_cls.cpu()
 
                 # this needs to go into background processes
                 results.append(
                     segmentation_export_pool.starmap_async(
-                        export_prediction_from_logits, (
-                            (prediction, properties, self.configuration_manager, self.plans_manager,
-                             self.dataset_json, output_filename_truncated, save_probabilities),
+                        export_prediction_from_logits_cls, (
+                            (
+                                prediction,
+                                prediction_cls,
+                                properties,
+                                self.configuration_manager,
+                                self.plans_manager,
+                                self.dataset_json,
+                                self.output_folder,
+                                output_filename_truncated,
+                                save_probabilities),
                         )
                     )
                 )
-                # for debug purposes
-                # export_prediction_from_logits(prediction, properties, self.configuration_manager, self.plans_manager,
-                #      self.dataset_json, output_filename_truncated, save_probabilities)
+                # # for debug purposes
+                # export_prediction_from_logits_cls(prediction, prediction_cls, properties, self.configuration_manager, self.plans_manager,
+                #      self.dataset_json, self.output_folder, output_filename_truncated, save_probabilities)
 
-                # if needed, export the softmax prediction for the next stage
-                if next_stages is not None:
-                    for n in next_stages:
-                        next_stage_config_manager = self.plans_manager.get_configuration(n)
-                        expected_preprocessed_folder = join(nnUNet_preprocessed, self.plans_manager.dataset_name,
-                                                            next_stage_config_manager.data_identifier)
-                        # next stage may have a different dataset class, do not use self.dataset_class
-                        dataset_class = infer_dataset_class(expected_preprocessed_folder)
-
-                        try:
-                            # we do this so that we can use load_case and do not have to hard code how loading training cases is implemented
-                            tmp = dataset_class(expected_preprocessed_folder, [k])
-                            d, _, _, _ = tmp.load_case(k)
-                        except FileNotFoundError:
-                            self.print_to_log_file(
-                                f"Predicting next stage {n} failed for case {k} because the preprocessed file is missing! "
-                                f"Run the preprocessing for this configuration first!")
-                            continue
-
-                        target_shape = d.shape[1:]
-                        output_folder = join(self.output_folder_base, 'predicted_next_stage', n)
-                        output_file_truncated = join(output_folder, k)
-
-                        # resample_and_save(prediction, target_shape, output_file, self.plans_manager, self.configuration_manager, properties,
-                        #                   self.dataset_json)
-                        results.append(segmentation_export_pool.starmap_async(
-                            resample_and_save, (
-                                (prediction, target_shape, output_file_truncated, self.plans_manager,
-                                 self.configuration_manager,
-                                 properties,
-                                 self.dataset_json,
-                                 default_num_processes,
-                                 dataset_class),
-                            )
-                        ))
                 # if we don't barrier from time to time we will get nccl timeouts for large datasets. Yuck.
                 if self.is_ddp and i < last_barrier_at_idx and (i + 1) % 20 == 0:
                     dist.barrier()
 
-            _ = [r.get() for r in results]
+            ret = [r.get()[0] for r in results]
+            save_results_to_csv(ret, self.output_folder)
 
         if self.is_ddp:
             dist.barrier()
@@ -1363,3 +1372,20 @@ class nnUNetClsTrainerDEBUG(nnUNetTrainer):
             self.on_epoch_end()
 
         self.on_train_end()
+
+
+def save_results_to_csv(results, save_path, filename="result_cls.csv"):
+
+    os.makedirs(save_path, exist_ok=True)
+    csv_file_path = os.path.join(save_path, filename)
+
+    fieldnames = results[0].keys()
+
+    with open(csv_file_path, "w", newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in results:
+            writer.writerow(row)
+
+    print(f"Saved {len(results)} results to {csv_file_path}")
+
