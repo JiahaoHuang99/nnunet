@@ -379,7 +379,6 @@ class nnUNetCLSPredictor(nnUNetPredictor):
                                            dtype=torch.half,
                                            device=results_device)
             cls_logits = torch.zeros(self.label_manager.num_segmentation_heads, dtype=torch.half, device=results_device)
-            # FIXME:!! BUG HERE???
             n_predictions = torch.zeros(data.shape[1:], dtype=torch.half, device=results_device)
             n_cls = 0
 
